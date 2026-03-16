@@ -1,0 +1,23 @@
+[Unit]
+Description=GO Shelf — home server GOG library manager
+After=network.target
+
+[Service]
+Type=simple
+# Create a dedicated user: sudo useradd -r -s /bin/false go-shelf
+User=go-shelf
+WorkingDirectory=/opt/go-shelf
+ExecStart=/usr/bin/node src/server.js
+Restart=on-failure
+RestartSec=10
+
+# Load environment from .env file if present
+EnvironmentFile=-/opt/go-shelf/.env
+
+# Sensible defaults — override in .env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=DOWNLOAD_DIR=/srv/go-shelf/downloads
+
+[Install]
+WantedBy=multi-user.target
