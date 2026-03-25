@@ -1,10 +1,11 @@
 import express from 'express';
+import axios from 'axios';
 import { fileURLToPath } from 'url';
 import { dirname, join, basename } from 'path';
 import { existsSync } from 'fs';
 import { getAuthUrl, exchangeCode, isAuthenticated, clearTokens } from './auth.js';
 import { getLibrary, getGameDetails } from './gog-api.js';
-import { getQueue, addToQueue, removeFromQueue, resumeQueue, verifyDownload } from './downloader.js';
+import { getQueue, addToQueue, removeFromQueue, resumeQueue, verifyDownload, gameDir } from './downloader.js';
 import { addClient } from './sse.js';
 import { startScan, getScanStats, isScanRunning, installerBytes, checkForUpdates, isUpdateRunning } from './scanner.js';
 import { getDb } from './db.js';
@@ -76,6 +77,19 @@ app.get('/api/games/:id', async (req, res) => {
   }
 });
 
+// Game description (public GOG API) ----------------------------------------
+
+app.get('/api/games/:id/description', async (req, res) => {
+  try {
+    const { data } = await axios.get(`https://api.gog.com/products/${req.params.id}`, {
+      params: { expand: 'description' },
+    });
+    res.json({ description: data.description?.full || '' });
+  } catch (err) {
+    res.json({ description: '' });
+  }
+});
+
 // Queue -------------------------------------------------------------------
 
 app.get('/api/queue', (_req, res) => res.json(getQueue()));
@@ -95,7 +109,7 @@ app.post('/api/verify/:id', async (req, res) => {
   if (!item || item.status !== 'completed') {
     return res.status(400).json({ error: 'Item not found or not completed' });
   }
-  const filePath = join(config.downloadDir, item.filename);
+  const filePath = join(gameDir(item.game_title), item.filename);
   res.json({ ok: true });
   verifyDownload(id, filePath, item.md5_expected).catch(console.error);
 });
@@ -124,6 +138,17 @@ app.get('/api/stats', (req, res) => {
   res.json({ ...getScanStats(platform), scanRunning: isScanRunning() });
 });
 
+// Cached game details — returns all scanned games with full download info --
+
+app.get('/api/cache/details', (_req, res) => {
+  const rows = getDb().prepare('SELECT game_id, title, data FROM game_details').all();
+  const result = rows.map(row => {
+    try { return { gameId: row.game_id, title: row.title, ...JSON.parse(row.data) }; }
+    catch { return null; }
+  }).filter(Boolean);
+  res.json(result);
+});
+
 // Game metadata — map of gameId -> { bytes, releaseTimestamp } -----------
 
 app.get('/api/sizes', (req, res) => {
@@ -145,17 +170,13 @@ app.get('/api/sizes', (req, res) => {
 
 // File downloads — serve completed installers to the browser -------------
 
-app.get('/dl/:filename', (req, res) => {
-  // basename prevents path traversal (e.g. ../../etc/passwd).
-  // We also gate on the queue DB so only completed download filenames are served —
-  // this prevents serving arbitrary files from downloadDir (e.g. gog-shelf.db if
-  // DB_PATH and DOWNLOAD_DIR happen to share a directory).
-  const safe = basename(req.params.filename);
+app.get('/dl/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
   const item = getDb()
-    .prepare("SELECT filename FROM queue WHERE filename = ? AND status = 'completed'")
-    .get(safe);
+    .prepare("SELECT filename, game_title FROM queue WHERE id = ? AND status = 'completed'")
+    .get(id);
   if (!item) return res.status(404).json({ error: 'File not found' });
-  const filePath = join(config.downloadDir, safe);
+  const filePath = join(gameDir(item.game_title), item.filename);
   if (!existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
   res.download(filePath);
 });

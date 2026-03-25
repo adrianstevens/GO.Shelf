@@ -7,6 +7,20 @@ import { getAccessToken } from './auth.js';
 import { broadcast } from './sse.js';
 import config from '../config.js';
 
+// Turn a game title into a safe directory name
+function sanitizeTitle(title) {
+  return title
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')   // strip illegal fs chars
+    .replace(/\s+/g, ' ')                       // collapse whitespace
+    .trim()
+    .slice(0, 200)                               // sane length limit
+    || 'unknown';
+}
+
+export function gameDir(gameTitle) {
+  return join(config.downloadDir, sanitizeTitle(gameTitle));
+}
+
 function computeMd5(filePath) {
   return new Promise((resolve, reject) => {
     const hash = createHash('md5');
@@ -119,22 +133,28 @@ async function downloadItem(item) {
   try {
     const token = await getAccessToken();
 
-    const response = await axios.get(`https://www.gog.com${item.manual_url}`, {
+    // First resolve the redirect to get the real filename from the CDN URL
+    const redirectResp = await axios.get(`https://www.gog.com${item.manual_url}`, {
       headers: { Authorization: `Bearer ${token}` },
+      maxRedirects: 0,
+      validateStatus: s => s >= 200 && s < 400,
+    });
+    const cdnUrl = redirectResp.headers.location || `https://www.gog.com${item.manual_url}`;
+    const urlFilename = decodeURIComponent(cdnUrl.split('/').pop().split('?')[0]);
+
+    const response = await axios.get(cdnUrl, {
       responseType: 'stream',
       maxRedirects: 10,
     });
 
-    // Try to get the real filename from Content-Disposition
-    const cd = response.headers['content-disposition'] || '';
-    const match = cd.match(/filename[^;=\n]*=['"]?([^'"\n]+)['"]?/i);
-    const filename = match ? match[1] : item.filename;
+    const filename = urlFilename || item.filename;
     const totalBytes = parseInt(response.headers['content-length'] || '0', 10);
 
     db.prepare("UPDATE queue SET bytes_total = ?, filename = ? WHERE id = ?").run(totalBytes, filename, item.id);
 
-    mkdirSync(config.downloadDir, { recursive: true });
-    destPath     = join(config.downloadDir, filename);
+    const gameFolder = gameDir(item.game_title);
+    mkdirSync(gameFolder, { recursive: true });
+    destPath     = join(gameFolder, filename);
     const writer = createWriteStream(destPath);
 
     let downloaded = 0;

@@ -548,7 +548,11 @@ async function openModal(game) {
   overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
 
   try {
-    const details = await api(`/api/games/${game.id}`);
+    const [details, descResp] = await Promise.all([
+      api(`/api/games/${game.id}`),
+      api(`/api/games/${game.id}/description`),
+    ]);
+    details._description = descResp.description || '';
     renderModal(details);
   } catch (err) {
     document.getElementById('modal-body').innerHTML =
@@ -558,7 +562,7 @@ async function openModal(game) {
 
 function renderModal(details) {
   currentModalDetails = details;
-  const { downloads = [], extras = [], dlcs = [] } = details;
+  const { downloads = [], extras = [], dlcs = [], _description = '' } = details;
 
   // Collect available platforms
   const platforms = new Set();
@@ -576,7 +580,7 @@ function renderModal(details) {
     btn.addEventListener('click', () => {
       activePlatform = p;
       document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.textContent.toLowerCase() === p));
-      renderModalBody(downloads, extras, dlcs);
+      renderModalBody(downloads, extras, dlcs, _description);
     });
     tabsEl.appendChild(btn);
   }
@@ -586,12 +590,16 @@ function renderModal(details) {
     activePlatform = [...platforms][0];
   }
 
-  renderModalBody(downloads, extras, dlcs);
+  renderModalBody(downloads, extras, dlcs, _description);
 }
 
-function renderModalBody(downloads, extras, dlcs) {
+function renderModalBody(downloads, extras, dlcs, description) {
   const body = document.getElementById('modal-body');
   const parts = [];
+
+  if (description) {
+    parts.push(`<div class="game-description">${description}</div>`);
+  }
 
   // Installers for active platform — deduplicate by manualUrl (GOG lists the
   // same file under multiple language entries for multi-language packages)
@@ -734,7 +742,7 @@ function dlItem({ gameId, name, meta, manualUrl, platform, type, md5 }) {
 
   let action;
   if (completed) {
-    action = `<a class="btn btn-success" href="/dl/${encodeURIComponent(completed.filename)}" download>↓ Download</a>`;
+    action = `<a class="btn btn-success" href="/dl/${completed.id}" download>↓ Download</a>`;
   } else {
     action = `
       <button class="btn ${inQueue ? 'btn-outline queued' : 'btn-primary'}" ${inQueue ? 'disabled' : ''}
@@ -923,7 +931,7 @@ function connectSSE() {
       if (dlFilter !== 'all') renderGames(allGames);
       // Refresh modal buttons if this game's details are open
       if (modalGameId && String(modalGameId) === String(gid) && currentModalDetails) {
-        renderModalBody(currentModalDetails.downloads || [], currentModalDetails.extras || [], currentModalDetails.dlcs || []);
+        renderModalBody(currentModalDetails.downloads || [], currentModalDetails.extras || [], currentModalDetails.dlcs || [], currentModalDetails._description || '');
       }
     }
   });

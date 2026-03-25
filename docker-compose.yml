@@ -3,14 +3,13 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:3000"
+      - "${PORT:-3001}:${PORT:-3001}"
     volumes:
       # Database and auth tokens (keep this on a persistent volume)
       - ./data:/app/data
       # Where installers are saved — change the left side to your NAS/drive path
-      - ${DOWNLOAD_DIR:-./downloads}:/downloads
+      - /mnt/reflect/gog-shelf:/downloads
     environment:
-      PORT: 3000
+      PORT: ${PORT:-3001}
       DOWNLOAD_DIR: /downloads
-      # Set HOST to your server's public address if accessing from other machines
-      HOST: ${HOST:-http://localhost:3000}
+      HOST: ${HOST:-http://localhost:3001}
